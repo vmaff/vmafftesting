@@ -10,7 +10,7 @@
 #define MYSQL_DATABASE		"vmafftesting"
 #define MYSQL_PASSWORD		""
 #define MAX_PASSWORD        31
-#define MODE_VERSION		"Vmaff's v0.04"
+#define MODE_VERSION		"Vmaff's v0.005"
 
 //прочее
 #define INFINITY            Float:0x7F800000
@@ -24,6 +24,25 @@
 //переменные и массивы
 new MySQL:dbHandle;
 
+//существующие команды, формат доступ--команда--описание
+enum e_cmds {
+	cmd_access[4],
+	cmd_text[24],
+	cmd_desc[128]
+};
+
+new cmds[9][e_cmds] = {
+	{"adm", "/makeadm", "Выдать игроку админку первого уровня."},
+	{"adm", "/deladm", "Снять игрока с админки."},
+	{"adm", "/weap", "Выдать себе оружие и патроны."},
+	{"adm", "/healme", "Вылечить себя до 100хп."},
+	{"adm", "/agm", "Админский гм. Бессмертие."},
+	{"com", "/veh", "Создание транспорта."},
+	{"com", "/delveh", "Удаление транспорта."},
+	{"com", "/setskin", "Смена скина персонажа."},
+	{"com", "/pm", "Личное сообщение игроку."}
+};
+
 enum e_pInfo {
 	pID,
 	pName [MAX_PLAYER_NAME],
@@ -32,8 +51,7 @@ enum e_pInfo {
 	Float:pX,
 	Float:pY,
 	Float:pZ,
-	bool:pAdmin,
-	pAdmLevel,
+	pAdmin,
 	bool:pInGame
 };
 
@@ -55,8 +73,7 @@ stock ClearPInfo (playerid) {
 	pInfo[playerid][pX] = 0.0;
 	pInfo[playerid][pY] = 0.0;
 	pInfo[playerid][pZ] = 0.0;
-	pInfo[playerid][pAdmin] = false;
-	pInfo[playerid][pAdmLevel] = 0;
+	pInfo[playerid][pAdmin] = 0;	
 	pInfo[playerid][pInGame] = false;
 	return 1;
 }
@@ -138,7 +155,7 @@ stock SaveAcc(playerid) {
 	new query[132 + MAX_PLAYER_NAME + MAX_PASSWORD + 11 + 1 + 33 + 3];
 	GetPlayerPos(playerid, pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ]);
 
-	format(query, sizeof(query), "UPDATE `accounts` SET `name` = '%s', `password` = '%s', `money` = %d, `admin` = %d, `admlevel` = %d, `posX` = %f, `posY` = %f, `posZ` = %f WHERE `id` = %d", pInfo[playerid][pName], pInfo[playerid][pPassword], pInfo[playerid][pMoney], pInfo[playerid][pAdmin], pInfo[playerid][pAdmLevel], pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ], pInfo[playerid][pID]);
+	format(query, sizeof(query), "UPDATE `accounts` SET `name` = '%s', `password` = '%s', `money` = %d, `admin` = %d, `posX` = %f, `posY` = %f, `posZ` = %f WHERE `id` = %d", pInfo[playerid][pName], pInfo[playerid][pPassword], pInfo[playerid][pMoney], pInfo[playerid][pAdmin], pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ], pInfo[playerid][pID]);
 	mysql_query(dbHandle, query, false);
 	return 1;
 }
@@ -162,7 +179,7 @@ stock ProxDetector(playerid, Float:radi, string[], col1,col2,col3,col4,col5)
 stock CreateAcc(playerid, password[]) {
 	new query[120 + MAX_PLAYER_NAME + MAX_PASSWORD + 11 + 1 + 33];
 	
-	format(query, sizeof(query), "INSERT INTO `accounts` (`name`, `password`, `money`, `admin`, `admlevel`, `posx`, `posy`, `posz`) VALUES ('%s', '%s', %d, %d, %d, %f, %f, %f)", pInfo[playerid][pName], password, pInfo[playerid][pMoney], pInfo[playerid][pAdmin], pInfo[playerid][pAdmLevel], pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ]);
+	format(query, sizeof(query), "INSERT INTO `accounts` (`name`, `password`, `money`, `admin`, `posx`, `posy`, `posz`) VALUES ('%s', '%s', %d, %d, %f, %f, %f)", pInfo[playerid][pName], password, pInfo[playerid][pMoney], pInfo[playerid][pAdmin], pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ]);
 	mysql_query(dbHandle, query, true);
 	LoadAccID(playerid);
 	
@@ -183,8 +200,7 @@ forward LoadAcc(playerid);
 public LoadAcc(playerid) {
 	cache_get_value_name_int(0, "id", pInfo[playerid][pID]);
  	cache_get_value_name_int(0, "money", pInfo[playerid][pMoney]);
- 	!!cache_get_value_name_int(0, "admin", pInfo[playerid][pAdmin]);
-	cache_get_value_name_int(0, "admlevel", pInfo[playerid][pAdmLevel]);
+ 	cache_get_value_name_int(0, "admin", pInfo[playerid][pAdmin]);	
 	cache_get_value_name_float(0, "posx", pInfo[playerid][pX]);
 	cache_get_value_name_float(0, "posy", pInfo[playerid][pY]);
 	cache_get_value_name_float(0, "posz", pInfo[playerid][pZ]);
@@ -389,8 +405,36 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 
 			if (response) {
 				switch (listitem) {
-					case 0: ShowPlayerDialog(playerid, 8011, DIALOG_STYLE_LIST, "Общие команды", "/veh    \t\tСоздание транспорта по ID\n/delveh\t\tУдаление транспорта, в котором вы сидите\n/pm     \t\tЛичные сообщения\n/setskin\t\tУстановить себе скин", "OK", "Назад");
-					case 1: ShowPlayerDialog(playerid, 8012, DIALOG_STYLE_LIST, "Админские команды", "/makeadm\t\tВыдача игроку админки\n/deladm \t\tСнятие игрока с админки\n/weap   \t\tВыдача оружия\n/healme \t\tВосстановление ХП\n/agm    \t\tАдминистраторский ГМ", "OK", "Назад");
+					case 0: {
+						new string[256];
+						new line[512];
+
+						line = "Команда\tОписание";
+
+						for (new i; i < 9; i++) {
+							if (!strcmp(cmds[i][cmd_access], "adm", false))
+								continue;
+
+							format(string, sizeof(string), "\n%s\t%s", cmds[i][cmd_text], cmds[i][cmd_desc]);
+							strcat(line, string);
+						}
+						ShowPlayerDialog(playerid, 8011, DIALOG_STYLE_TABLIST_HEADERS, "Общие команды", line, "OK", "Назад");
+					}					
+					case 1: {
+						new string[256];
+						new line[512];
+
+						line = "Команда\tОписание";
+
+						for (new i; i < 9; i++) {
+							if (!strcmp(cmds[i][cmd_access], "com", false))
+								continue;
+
+							format(string, sizeof(string), "\n%s\t%s", cmds[i][cmd_text], cmds[i][cmd_desc]);
+							strcat(line, string);
+						}
+						ShowPlayerDialog(playerid, 8011, DIALOG_STYLE_TABLIST_HEADERS, "Админские команды", line, "OK", "Назад");
+					}
 				}
 			}
 		}
@@ -424,16 +468,16 @@ cmd:cmds(playerid, params[]) {
 cmd:makeadm(playerid, params[]) {
 	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
 
-	if (pInfo[playerid][pAdmin] != true) 
+	if (pInfo[playerid][pAdmin] <= 0) 
 		return SendClientMessage(playerid, 0xC0C0C0FF, "Доступ к команде запрещен!");
 	
 	if (sscanf(params, "d", params[0])) 
 		return SendClientMessage(playerid, COLOR_GREY, "/makeadm [ID]");
 
-	if (pInfo[playerid][pAdmLevel] < 2)
+	if (pInfo[playerid][pAdmin] < 5)
 		return SendClientMessage(playerid, COLOR_RED, "Ваш уровень админки слишком низок!");
 
-	if (pInfo[params[0]][pAdmin] == true)
+	if (pInfo[params[0]][pAdmin] > 0)
 		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок уже имеет админку!");
 		
 	if (IsPlayerConnected(params[0]) == 0) 
@@ -445,8 +489,7 @@ cmd:makeadm(playerid, params[]) {
 	GetPlayerName(playerid, admname, sizeof(admname));
 	GetPlayerName(params[0], targetname, sizeof(targetname));
 		
-	pInfo[params[0]][pAdmin] = true;
-	pInfo[params[0]][pAdmLevel] = 1;
+	pInfo[params[0]][pAdmin] = 1;	
 	format(string, sizeof(string), "%s[%d] выдал игроку %s[%d] админку 1-го уровня.", admname, playerid, targetname, params[0]);
 	SendClientMessageToAll(COLOR_RED, string);
 
@@ -455,16 +498,16 @@ cmd:makeadm(playerid, params[]) {
 
 cmd:deladm(playerid, params[]) {
 	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
-	if (pInfo[playerid][pAdmin] != true) 
+	if (pInfo[playerid][pAdmin] <= 0) 
 		return SendClientMessage(playerid, 0xC0C0C0FF, "Доступ к команде запрещен!");
 	
 	if (sscanf(params, "d", params[0]))
 		return SendClientMessage(playerid, COLOR_GREY, "/deladm [ID]");			
 
-	if (pInfo[playerid][pAdmLevel] < 2)
+	if (pInfo[playerid][pAdmin] < 5)
 		return SendClientMessage(playerid, COLOR_RED, "Ваш уровень админки слишком низок!");
 
-	if (pInfo[params[0]][pAdmin] != true)
+	if (pInfo[params[0]][pAdmin] <= 0)
 		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не имеет админки!");
 	
 	if (params[0] == playerid) 
@@ -481,7 +524,7 @@ cmd:deladm(playerid, params[]) {
 }
 
 cmd:weap(playerid, params[]) {
-	if (pInfo[playerid][pAdmin] != true) 
+	if (pInfo[playerid][pAdmin] <= 0) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 	
 	if (sscanf(params, "dd", params[0], params[1]))
@@ -493,7 +536,7 @@ cmd:weap(playerid, params[]) {
 }
 
 cmd:agm(playerid, params[]) {
-	if (pInfo[playerid][pAdmin] != true) 
+	if (pInfo[playerid][pAdmin] <= 0) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 	
 	if (GetPVarInt(playerid, "agm") == 0) {
@@ -509,7 +552,7 @@ cmd:agm(playerid, params[]) {
 }
 
 cmd:healme(playerid, params[]) {
-	if (pInfo[playerid][pAdmin] != true) 
+	if (pInfo[playerid][pAdmin] <= 0) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 
 	SetPlayerHealth(playerid, 100);
