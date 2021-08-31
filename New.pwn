@@ -14,7 +14,11 @@
 
 //прочее
 #define INFINITY            Float:0x7F800000
-#define COMMANDS_QTY		13
+#define COMMANDS_QTY		14
+#define INVENTORY_SLOTS		10
+
+//спавны
+#define LS_SPAWN			(2, 1277.4312, -1539.7104, 13.5589, 272.0752 , 0, 0, 0, 0, 0, 0)
 
 //цвета
 #define RP_COLOR			0xC2A2DA00
@@ -33,10 +37,10 @@ enum e_cmds {
 	cmd_desc[128]
 };
 
-//всего команд - 13, изменить значение в строчке 17, ОПТИМИЗИРОВАТЬ!
+//всего команд - 14, изменить значение в строчке 17, ОПТИМИЗИРОВАТЬ!
 new cmds[][e_cmds] = {
 	{"adm", "/makeadm", "Выдать игроку админку первого уровня."},
-	{"adm", "/changeadmlvl", "Изменить уровень админки игрока."},
+	{"adm", "/admlvl", "Изменить уровень админки игрока."},
 	{"adm", "/deladm", "Снять игрока с админки."},
 	{"adm", "/weap", "Выдать себе оружие и патроны."},
 	{"adm", "/heal", "Вылечить игрока до 100хп."},
@@ -47,9 +51,11 @@ new cmds[][e_cmds] = {
 	{"com", "/pm", "Личное сообщение игроку."},
 	{"com", "/me", "Отыгровка действия от третьего лица."},
 	{"com", "/do", "Отыгровка действия со стороны."},
-	{"com", "/help", "Помощь по командам"}
+	{"com", "/help", "Помощь по командам"},
+	{"com", "/inv", "Открытие инвентаря персонажа."}
 };
 
+//информация об игроке
 enum e_pInfo {
 	pID,
 	pName [MAX_PLAYER_NAME],
@@ -62,7 +68,18 @@ enum e_pInfo {
 	bool:pInGame
 };
 
+//инвентарь игрока
+enum p_Inventory {
+	itemID,
+	ownerID,
+	itemName[32],
+	itemNameRus[32],
+	itemNumber[8],
+	itemCount
+};
+
 new pInfo[MAX_PLAYERS][e_pInfo];
+new pItems[MAX_PLAYERS][p_Inventory];
 
 public OnGameModeInit()
 {	
@@ -85,6 +102,17 @@ stock ClearPInfo (playerid) {
 	return 1;
 }
 
+stock ClearPItems (playerid) {
+	pItems[playerid][itemID] = 0;
+	pItems[playerid][ownerID] = 0;
+	pItems[playerid][itemName][0] = EOS;
+	pItems[playerid][itemNameRus][0] = EOS;
+	pItems[playerid][itemNumber][0] = EOS;
+	pItems[playerid][itemCount] = 0;
+	return 1;
+}
+
+//коннект к базе
 stock ConnectMySql() {
     dbHandle = mysql_connect(MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE);
 	switch(mysql_errno()) {
@@ -107,22 +135,27 @@ public OnGameModeExit()
 
 public OnPlayerRequestClass(playerid, classid)
 {
-	if (!pInfo[playerid][pInGame]) {
+	//хуй его знает
+	/*if (!pInfo[playerid][pInGame]) {
 		SetSpawnInfo(playerid, 0, 2, 1958.3783, 1343.1572, 15.3746, 269.1425, 0, 0, 0, 0, 0, 0);
 		SpawnPlayer(playerid);
-	}
+	}*/
 	return 1;
 }
 
 public OnPlayerConnect(playerid)
 {
+	//обнуляем энуминаторы для последующей в них записи
 	ClearPInfo(playerid);
-	
+	ClearPItems(playerid);
+
+	//проверка наличия аккаунта в базе
 	if (!pInfo[playerid][pInGame]) {
 		GetPlayerName(playerid, pInfo[playerid][pName], MAX_PLAYER_NAME);
 		new query[48 + MAX_PLAYER_NAME];
 		format(query, sizeof(query), "SELECT * FROM `accounts` WHERE `name` = '%s'", pInfo[playerid][pName]);
 		mysql_query(dbHandle, query, true);
+
 		CheckAcc(playerid);
 	}
 	
@@ -133,8 +166,10 @@ public OnPlayerConnect(playerid)
 
 public OnPlayerDisconnect(playerid, reason)
 {
-	SaveAcc(playerid);
-	ClearPInfo(playerid);
+	SaveAcc(playerid); // сохраняем данные об аккаунте
+	SaveInventory(playerid); // сохраняем данные об инвентаре игрока
+	ClearPInfo(playerid); // на всякий случай ещё обнуляем энуминатор
+	ClearPItems(playerid); // на всякий случай ещё обнуляем энуминатор
 	return 1;
 }
 
@@ -143,13 +178,15 @@ public OnPlayerSpawn(playerid)
 	return 1;
 }
 
-forward CheckAcc(playerid);
-public CheckAcc(playerid) {
+//проверка на наличие аккаунта
+stock CheckAcc(playerid) {
 	new rows;
 	cache_get_row_count(rows);
 	
+	//если аккаута нет - даем рег
 	if (!rows) {
 		ShowPlayerDialog(playerid, 8008, DIALOG_STYLE_INPUT, "Регистрация", "Введите ниже свой пароль для регистрации.", "OK", "");
+	//если есть - авторизация
 	} else {
 		ShowPlayerDialog(playerid, 8009, DIALOG_STYLE_INPUT, "Авторизация", "Введите пароль от аккаунта.", "OK", "");
 		cache_get_value_name(0, "password", pInfo[playerid][pPassword], MAX_PASSWORD);
@@ -158,6 +195,7 @@ public CheckAcc(playerid) {
 	return 1;
 }
 
+//сохранение данных об аккаунте
 stock SaveAcc(playerid) {
 	new query[132 + MAX_PLAYER_NAME + MAX_PASSWORD + 11 + 1 + 33 + 3];
 	GetPlayerPos(playerid, pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ]);
@@ -167,6 +205,16 @@ stock SaveAcc(playerid) {
 	return 1;
 }
 
+//сохранение инвентаря
+stock SaveInventory(playerid) {
+	new query[132 + 11 + 11 + 3];
+
+	format(query, sizeof(query), "UPDATE `items` SET `ownerid` = %d, `count` = %d WHERE `id` = %d", pItems[playerid][ownerID], pItems[playerid][itemCount], pItems[playerid][itemID]);
+	mysql_query(dbHandle, query, false);
+	return 1;
+}
+
+//проверка на наличие в радиусе и вывод строчки string[]
 stock ProxDetector(playerid, Float:radi, string[], col1,col2,col3,col4,col5)
 {
     new Float: Pos[3], Float: Radius;
@@ -183,6 +231,7 @@ stock ProxDetector(playerid, Float:radi, string[], col1,col2,col3,col4,col5)
     return true;
 }
 
+//регистрация и создание аккаунта
 stock CreateAcc(playerid, password[]) {
 	new query[120 + MAX_PLAYER_NAME + MAX_PASSWORD + 11 + 1 + 33];
 	
@@ -198,13 +247,29 @@ stock CreateAcc(playerid, password[]) {
 	return 1;
 }
 
-forward LoadAccID(playerid);
-public LoadAccID(playerid) {
+stock CreateItem(playerid, ownerid, name, number) {
+	new query[120 + ];
+
+	format(query, sizeof(query), "INSERT INTO `items` (`ownerid`, `name`, `number`, `count`) VALUES (%d, '%s', '%s', 1)", ownerid, name, number
+	mysql_query(dbHandle, query, true);
+	LoadItemID(playerid);
+
+	SendClientMessage(playerid, COLOR_GREEN, "Вы успешно создали предмет!");
+	return 1;
+}
+
+//загрузка айдишника только что созданного аккаунта в энуминатор
+stock LoadAccID(playerid) {
 	return pInfo[playerid][pID] = cache_insert_id();
 }
 
-forward LoadAcc(playerid);
-public LoadAcc(playerid) {
+//загрузка айдишника только что созданного предмета
+stock LoadItemID(playerid) {
+	return pItems[playerid][itemID] = cache_insert_id();
+}
+
+//загрузка данных об аккаунте в энуминатор
+stock LoadAcc(playerid) {
 	cache_get_value_name_int(0, "id", pInfo[playerid][pID]);
  	cache_get_value_name_int(0, "money", pInfo[playerid][pMoney]);
  	cache_get_value_name_int(0, "admin", pInfo[playerid][pAdmin]);	
@@ -219,9 +284,38 @@ public LoadAcc(playerid) {
 	return 1;
 }
 
+stock LoadInventory(playerid) {
+	new rows;
+	new line[1000], string[128];
+	cache_get_row_count(rows);
+
+	line = "#\tНазвание предмета\tКоличество";
+
+	for (new i; i < rows; i++) {
+		cache_get_value_name_int(i, "id", pItems[playerid][itemID]);
+		cache_get_value_name_int(i, "ownerid", pItems[playerid][ownerID]);
+		cache_get_value_name(i, "name", pItems[playerid][itemName]);
+		cache_get_value_name(i, "number", pItems[playerid][itemNumber]);
+		cache_get_value_name_int(i, "count", pItems[playerid][itemCount]);
+	}
+
+	for (new i; i < INVENTORY_SLOTS; i++) {
+		if (pItems[playerid][itemName])
+			format(string, sizeof(string), "\n%d\t%s\t%d", i, pItems[playerid][itemName], pItems[playerid][itemCount]);
+		else
+			format(string, sizeof(string), "\n%d\tПусто\t0", i);
+		strcat(line, string);
+	}
+
+	ShowPlayerDialog(playerid, 8014, DIALOG_STYLE_TABLIST_HEADERS, "Инвентарь", line, "OK", "Выход");
+
+	return 1;	
+}
+
 public OnPlayerDeath(playerid, killerid, reason)
 {
-	SetSpawnInfo(playerid, 0, 2, 1958.3783, 1343.1572, 15.3746, 269.1425, 0, 0, 0, 0, 0, 0);
+	//установка стандартного ЛC спавна при смерти
+	SetSpawnInfo(playerid, 0, 2, 1277.4312, -1539.7104, 13.5589, 272.0752 , 0, 0, 0, 0, 0, 0);
 	return 1;
 }
 
@@ -237,12 +331,13 @@ public OnVehicleDeath(vehicleid, killerid)
 
 public OnPlayerText(playerid, text[])
 {
+	//разговор и анимация разговора
 	new string[256], playername[MAX_PLAYER_NAME];
 	GetPlayerName(playerid, playername, sizeof(playername));
 
 	format(string, sizeof(string), "%s говорит: %s", playername, text);
-	ProxDetector(playerid, 15.0, string, -1, -1, -1, -1, -1);
-	SetPlayerChatBubble(playerid, text, -1, 15.0, 10000);
+	ProxDetector(playerid, 10.0, string, -1, -1, -1, -1, -1);
+	SetPlayerChatBubble(playerid, text, -1, 10.0, 10000);
 	ApplyAnimation(playerid, "PED", "IDLE_CHAT", 4.0, 0, 1, 1, 1, 1);
     SetTimerEx("ClearAnimText", 1500, false, "d", playerid);
 
@@ -377,6 +472,7 @@ public OnVehicleStreamOut(vehicleid, forplayerid)
 public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 {
 	switch(dialogid) {
+		//диалог регистрации
 		case 8008: {
 			if (!response) return ShowPlayerDialog(playerid, 8008, DIALOG_STYLE_INPUT, "Регистрация", "Введите ниже свой пароль для регистрации.", "OK", "");
 			
@@ -386,6 +482,7 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 			format(pInfo[playerid][pPassword], MAX_PASSWORD, "%s", inputtext);
 			CreateAcc(playerid, pInfo[playerid][pPassword]);
 		}
+		//диалог авторизации
 		case 8009: {
 			if (!response) return ShowPlayerDialog(playerid, 8009, DIALOG_STYLE_INPUT, "Авторизация", "Введите пароль от аккаунта.", "OK", "");
 			
@@ -407,6 +504,7 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 				SetPVarInt(playerid, "BadAttempt", GetPVarInt(playerid, "BadAttempt") + 1);
 			}
 		}
+		//диалог помощи по командам
 		case 8010: {
 			if (!response) return 1;
 
@@ -445,19 +543,27 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 				}
 			}
 		}
+		//сабдиалоги помощи по командам
 		case 8011: if (!response) return ShowPlayerDialog(playerid, 8010, DIALOG_STYLE_LIST, "Помощь по командам", "Общие\nАдминские", "OK", "Выход");
 		case 8012: if (!response) return ShowPlayerDialog(playerid, 8010, DIALOG_STYLE_LIST, "Помощь по командам", "Общие\nАдминские", "OK", "Выход");
+		//диалог выбора места спавна
 		case 8013: {
 			if (!response) 
 				return ShowPlayerDialog(playerid, 8013, DIALOG_STYLE_LIST, "Выбор места спавна", "Стандартный спавн\nТам, где вышел", "OK", "Выход");
 
 			if (response) {
 				switch (listitem) {
-					case 0: SetSpawnInfo(playerid, 0, 2, 1958.3783, 1343.1572, 15.3746, 269.1425, 0, 0, 0, 0, 0, 0);
-					case 1: SetSpawnInfo(playerid, 0, 2, pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ] + 0.5, 0, 0, 0, 0, 0, 0, 0);
+					case 0: SetSpawnInfo(playerid, 0, 2, 1277.4312, -1539.7104, 13.5589, 272.0752 , 0, 0, 0, 0, 0, 0); //стандартный спавн
+					case 1: SetSpawnInfo(playerid, 0, 2, pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ] + 0.5, 0, 0, 0, 0, 0, 0, 0); //спавн на месте выхода
 				}
 			}
 			SpawnPlayer(playerid);
+		}
+		case 8014: {
+			if (!response)
+				return 1;
+			if (response)
+				return 1;
 		}
 	}
 	return 1;
@@ -468,17 +574,15 @@ public OnPlayerClickPlayer(playerid, clickedplayerid, source)
 	return 1;
 }
 
+//выдача админки игроку
 cmd:makeadm(playerid, params[]) {
 	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
 
-	if (pInfo[playerid][pAdmin] <= 0) 
+	if (pInfo[playerid][pAdmin] <= 4) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 	
 	if (sscanf(params, "d", params[0])) 
 		return SendClientMessage(playerid, COLOR_GREY, "/makeadm [ID]");
-
-	if (pInfo[playerid][pAdmin] < 5)
-		return SendClientMessage(playerid, COLOR_RED, "Ваш уровень админки слишком низок!");
 
 	if (pInfo[params[0]][pAdmin] > 0)
 		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок уже имеет админку!");
@@ -494,21 +598,19 @@ cmd:makeadm(playerid, params[]) {
 		
 	pInfo[params[0]][pAdmin] = 1;	
 	format(string, sizeof(string), "%s[%d] выдал игроку %s[%d] админку 1-го уровня.", admname, playerid, targetname, params[0]);
-	SendClientMessageToAll(COLOR_RED, string);
+	SendClientMessageToAll(COLOR_RED, string); //ненужно, сменить на выдачу сообщения только админам
 
 	return 1;
 }
 
+//снятие админки с игрока
 cmd:deladm(playerid, params[]) {
 	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
-	if (pInfo[playerid][pAdmin] <= 0) 
+	if (pInfo[playerid][pAdmin] <= 4) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
-	
+
 	if (sscanf(params, "d", params[0]))
 		return SendClientMessage(playerid, COLOR_GREY, "/deladm [ID]");			
-
-	if (pInfo[playerid][pAdmin] < 5)
-		return SendClientMessage(playerid, COLOR_RED, "Ваш уровень админки слишком низок!");
 
 	if (IsPlayerConnected(params[0]) == 0) 
 		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не на сервере!");
@@ -523,24 +625,41 @@ cmd:deladm(playerid, params[]) {
 	GetPlayerName(params[0], targetname, sizeof(targetname));
 	
 	pInfo[params[0]][pAdmin] = 0;
-	format(string, sizeof(string), "%s[%d] снял с админки игрока %s[%d].", admname, playerid, targetname, params[0]);
-	SendClientMessageToAll(COLOR_RED, string);
+	format(string, sizeof(string), "%s[%d] снял с админки игрока %s[%d].", admname, playerid, targetname, params[0]); 
+	SendClientMessageToAll(COLOR_RED, string); //не нужно, сменить на выдачу сообщения только админам
 
 	return 1;
 }
 
-cmd:weap(playerid, params[]) {
-	if (pInfo[playerid][pAdmin] <= 0) 
+//смена уровня админки у игрока
+cmd:admlvl(playerid, params[]) {
+	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
+	if (pInfo[playerid][pAdmin] <= 4) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 	
 	if (sscanf(params, "dd", params[0], params[1]))
-		return SendClientMessage(playerid, COLOR_GREY, "/weap [ID оружия] [Патроны]");
-		
-	GivePlayerWeapon(playerid, params[0], params[1]);
+		return SendClientMessage(playerid, COLOR_GREY, "/admlvl [ID] [Уровень]");			
+
+	if (pInfo[params[0]][pAdmin] <= 0)
+		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не имеет админ прав!");
+	
+	if (params[1] == 0)
+		return SendClientMessage(playerid, COLOR_RED, "Для снятия игрока с админки используйте /deladm [ID].");
+
+	if (params[0] == playerid) 
+		return SendClientMessage(playerid, COLOR_RED, "Нельзя изменить свой уровень админ прав!");
+	
+	GetPlayerName(playerid, admname, sizeof(admname));
+	GetPlayerName(params[0], targetname, sizeof(targetname));
+
+	format(string, sizeof(string), "%s[%d] изменил уровень админки игрока %s[%d] с %d на %d.", admname, playerid, targetname, params[0], pInfo[params[0]][pAdmin], params[1]);
+	pInfo[params[0]][pAdmin] = params[1];
+	SendClientMessageToAll(COLOR_RED, string);//не нужно, сменить на выдачу сообщения только админам
 
 	return 1;
 }
 
+//админский гм
 cmd:agm(playerid, params[]) {
 	if (pInfo[playerid][pAdmin] <= 0) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
@@ -557,6 +676,46 @@ cmd:agm(playerid, params[]) {
 	return 1;
 }
 
+//админский чат
+alias:achat("a");
+cmd:achat(playerid, params[]) {
+	new playername[MAX_PLAYER_NAME];
+	new string[128];
+	GetPlayerName(playerid, playername, sizeof(playername));
+
+	format(string, sizeof(string), "[A] %s: %s", playername, params[0]);
+
+	if (pInfo[playerid][pAdmin] <= 0) 
+		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
+	
+	if (sscanf(params, "s", params[0]))
+		return SendClientMessage(playerid, COLOR_GREY, "/a(chat) [Сообщение]");
+
+	//проходка циклом по всем игрокам и проверка их на наличие админки, если да - выдаем сообщение, если нет - нет
+	for (new i; i < MAX_PLAYERS; i++) {
+		if (pInfo[i][pAdmin] <= 0)
+			continue;
+		else
+			SendClientMessage(i, 0x46BBAA00, string);
+	}
+
+	return 1;
+}
+
+//выдача игроку оружия
+cmd:weap(playerid, params[]) {
+	if (pInfo[playerid][pAdmin] <= 0) 
+		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
+	
+	if (sscanf(params, "dd", params[0], params[1]))
+		return SendClientMessage(playerid, COLOR_GREY, "/weap [ID оружия] [Патроны]");
+		
+	GivePlayerWeapon(playerid, params[0], params[1]);
+
+	return 1;
+}
+
+//хил игрока
 cmd:heal(playerid, params[]) {
 	new string[64], targetname[MAX_PLAYER_NAME];
 	GetPlayerName(params[0], targetname, sizeof(targetname));
@@ -581,6 +740,7 @@ cmd:heal(playerid, params[]) {
 	return 1;
 }
 
+//смена собственного скина
 cmd:setskin(playerid, params[]) {
 	new skinid;
 	skinid = strval(params[0]);
@@ -593,6 +753,7 @@ cmd:setskin(playerid, params[]) {
 	return 1;
 }
 
+//личные сообщения
 cmd:pm(playerid, params[]) {
 	new string[256];
 	new sendername[MAX_PLAYER_NAME];
@@ -622,6 +783,7 @@ cmd:pm(playerid, params[]) {
 	return 1;
 }
 
+//отыгровочки
 cmd:me(playerid, params[]) {    
 	new playername[MAX_PLAYER_NAME];
 	GetPlayerName(playerid, playername, sizeof(playername));
@@ -636,6 +798,7 @@ cmd:me(playerid, params[]) {
 	return 1;
 }
 
+//ненужная в рп команда
 cmd:do(playerid, params[]) {
 	new playername[MAX_PLAYER_NAME];
 	GetPlayerName(playerid, playername, sizeof(playername));
@@ -650,21 +813,29 @@ cmd:do(playerid, params[]) {
 	return 1;
 }
 
+//создание транспорта
 cmd:veh(playerid, params[]) {
-	new vehid, color1, color2;
+	new vehid, newvehid, color1, color2;
 	new Float:x, Float:y, Float:z;
-	
-	//проверка на правильное введение команды и пустоту параметров
-	if(sscanf(params, "ddd", vehid, color1, color2)) 
-		return SendClientMessage(playerid, COLOR_GREY, "/veh [ID транспорта] [Цвет1] [Цвет2]");
-	
+
 	GetPlayerPos(playerid, x, y, z);
-	CreateVehicle(vehid, x + 3.0, y, z, 0, color1, color2, -1);
+	
+	if (IsPlayerInAnyVehicle(playerid))
+		return SendClientMessage(playerid, COLOR_RED, "Вы уже находитесь в автомобиле!");
+
+	//проверка на правильное введение команды и пустоту параметров
+	if	(sscanf(params, "ddd", vehid, color1, color2)) 
+		return SendClientMessage(playerid, COLOR_GREY, "/veh [ID транспорта] [Цвет1] [Цвет2]");
+
+	newvehid = CreateVehicle(vehid, x, y, z, 90, color1, color2, -1);
+	PutPlayerInVehicle(playerid, newvehid, 0);
+		
 	SendClientMessage(playerid, COLOR_GREEN, "Вы успешно создали транспорт!");
 
 	return 1;
 }
 
+//удаление транспорта
 cmd:delveh(playerid, params[]) {
 	new vehid;
 	
@@ -677,6 +848,7 @@ cmd:delveh(playerid, params[]) {
 	return 1;
 }
 
+//хелпа, помощь по командам
 alias:help("commands");
 cmd:help(playerid, params[]) {
 	ShowPlayerDialog(playerid, 8010, DIALOG_STYLE_LIST, "Помощь по командам", "Общие\nАдминские", "OK", "Выход");
@@ -684,57 +856,12 @@ cmd:help(playerid, params[]) {
 	return 1;
 }
 
-cmd:changeadmlvl(playerid, params[]) {
-	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
-	if (pInfo[playerid][pAdmin] <= 5) 
-		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
-	
-	if (sscanf(params, "dd", params[0], params[1]))
-		return SendClientMessage(playerid, COLOR_GREY, "/changeadmlvl [ID] [Уровень]");			
+cmd:inv(playerid, params[]) {
+	new query[64 + 3];
 
-	if (pInfo[playerid][pAdmin] < 5)
-		return SendClientMessage(playerid, COLOR_RED, "Ваш уровень админки слишком низок!");
-
-	if (pInfo[params[0]][pAdmin] <= 0)
-		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не имеет админки!");
-	
-	if (params[1] == 0)
-		return SendClientMessage(playerid, COLOR_RED, "Для снятия игрока с админки используйте /deladm [ID].");
-
-	if (params[0] == playerid) 
-		return SendClientMessage(playerid, COLOR_RED, "Нельзя изменить свой уровень админки!");
-	
-	GetPlayerName(playerid, admname, sizeof(admname));
-	GetPlayerName(params[0], targetname, sizeof(targetname));
-
-	format(string, sizeof(string), "%s[%d] изменил уровень админки игрока %s[%d] с %d на %d.", admname, playerid, targetname, params[0], pInfo[params[0]][pAdmin], params[1]);
-	pInfo[params[0]][pAdmin] = params[1];
-	SendClientMessageToAll(COLOR_RED, string);
-
-	return 1;
-}
-
-alias:achat("a");
-cmd:achat(playerid, params[]) {
-	new playername[MAX_PLAYER_NAME];
-	new string[128];
-	GetPlayerName(playerid, playername, sizeof(playername));
-
-	format(string, sizeof(string), "[A] %s: %s", playername, params[0]);
-
-
-	if (pInfo[playerid][pAdmin] <= 0) 
-		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
-	
-	if (sscanf(params, "s", params[0]))
-		return SendClientMessage(playerid, COLOR_GREY, "/a(chat) [Сообщение]");
-
-	for (new i; i < MAX_PLAYERS; i++) {
-		if (pInfo[i][pAdmin] <= 0)
-			continue;
-		else
-			SendClientMessage(i, 0x46BBAA00, string);
-	}
+	format(query, sizeof(query), "SELECT * FROM `items` WHERE `ownerid` = %d", pInfo[playerid][pID]);
+	mysql_query(dbHandle, query, true);
+	LoadInventory(playerid);
 
 	return 1;
 }
