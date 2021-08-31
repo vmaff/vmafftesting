@@ -14,12 +14,14 @@
 
 //прочее
 #define INFINITY            Float:0x7F800000
+#define COMMANDS_QTY		13
 
 //цвета
 #define RP_COLOR			0xC2A2DA00
 #define COLOR_GREY			0xC0C0C0FF
 #define COLOR_GREEN			0x9EC73DAA
 #define COLOR_RED			0xFF6347AA
+#define COLOR_YELLOW		0xFFFF00AA
 
 //переменные и массивы
 new MySQL:dbHandle;
@@ -31,16 +33,21 @@ enum e_cmds {
 	cmd_desc[128]
 };
 
-new cmds[9][e_cmds] = {
+//всего команд - 13, изменить значение в строчке 17, ОПТИМИЗИРОВАТЬ!
+new cmds[][e_cmds] = {
 	{"adm", "/makeadm", "Выдать игроку админку первого уровня."},
+	{"adm", "/changeadmlvl", "Изменить уровень админки игрока."},
 	{"adm", "/deladm", "Снять игрока с админки."},
 	{"adm", "/weap", "Выдать себе оружие и патроны."},
-	{"adm", "/healme", "Вылечить себя до 100хп."},
+	{"adm", "/heal", "Вылечить игрока до 100хп."},
 	{"adm", "/agm", "Админский гм. Бессмертие."},
 	{"com", "/veh", "Создание транспорта."},
 	{"com", "/delveh", "Удаление транспорта."},
 	{"com", "/setskin", "Смена скина персонажа."},
-	{"com", "/pm", "Личное сообщение игроку."}
+	{"com", "/pm", "Личное сообщение игроку."},
+	{"com", "/me", "Отыгровка действия от третьего лица."},
+	{"com", "/do", "Отыгровка действия со стороны."},
+	{"com", "/help", "Помощь по командам"}
 };
 
 enum e_pInfo {
@@ -411,7 +418,7 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 
 						line = "Команда\tОписание";
 
-						for (new i; i < 9; i++) {
+						for (new i; i < COMMANDS_QTY; i++) {
 							if (!strcmp(cmds[i][cmd_access], "adm", false))
 								continue;
 
@@ -426,7 +433,7 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 
 						line = "Команда\tОписание";
 
-						for (new i; i < 9; i++) {
+						for (new i; i < COMMANDS_QTY; i++) {
 							if (!strcmp(cmds[i][cmd_access], "com", false))
 								continue;
 
@@ -461,15 +468,11 @@ public OnPlayerClickPlayer(playerid, clickedplayerid, source)
 	return 1;
 }
 
-cmd:cmds(playerid, params[]) {
-	
-}
-
 cmd:makeadm(playerid, params[]) {
 	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
 
 	if (pInfo[playerid][pAdmin] <= 0) 
-		return SendClientMessage(playerid, 0xC0C0C0FF, "Доступ к команде запрещен!");
+		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 	
 	if (sscanf(params, "d", params[0])) 
 		return SendClientMessage(playerid, COLOR_GREY, "/makeadm [ID]");
@@ -484,7 +487,7 @@ cmd:makeadm(playerid, params[]) {
 		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не на сервере!");
 
 	if (params[0] == playerid) 
-		return SendClientMessage(playerid, 0xC0C0C0FF, "Нельзя выдать админку самому себе!");
+		return SendClientMessage(playerid, COLOR_RED, "Нельзя выдать админку самому себе!");
 		
 	GetPlayerName(playerid, admname, sizeof(admname));
 	GetPlayerName(params[0], targetname, sizeof(targetname));
@@ -499,7 +502,7 @@ cmd:makeadm(playerid, params[]) {
 cmd:deladm(playerid, params[]) {
 	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
 	if (pInfo[playerid][pAdmin] <= 0) 
-		return SendClientMessage(playerid, 0xC0C0C0FF, "Доступ к команде запрещен!");
+		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 	
 	if (sscanf(params, "d", params[0]))
 		return SendClientMessage(playerid, COLOR_GREY, "/deladm [ID]");			
@@ -507,16 +510,19 @@ cmd:deladm(playerid, params[]) {
 	if (pInfo[playerid][pAdmin] < 5)
 		return SendClientMessage(playerid, COLOR_RED, "Ваш уровень админки слишком низок!");
 
+	if (IsPlayerConnected(params[0]) == 0) 
+		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не на сервере!");
+
 	if (pInfo[params[0]][pAdmin] <= 0)
 		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не имеет админки!");
 	
 	if (params[0] == playerid) 
-		return SendClientMessage(playerid, 0xC0C0C0FF, "Нельзя снять с админки себя!");
+		return SendClientMessage(playerid, COLOR_RED, "Нельзя снять с админки себя!");
 	
 	GetPlayerName(playerid, admname, sizeof(admname));
 	GetPlayerName(params[0], targetname, sizeof(targetname));
 	
-	pInfo[params[0]][pAdmin] = false;
+	pInfo[params[0]][pAdmin] = 0;
 	format(string, sizeof(string), "%s[%d] снял с админки игрока %s[%d].", admname, playerid, targetname, params[0]);
 	SendClientMessageToAll(COLOR_RED, string);
 
@@ -551,12 +557,26 @@ cmd:agm(playerid, params[]) {
 	return 1;
 }
 
-cmd:healme(playerid, params[]) {
+cmd:heal(playerid, params[]) {
+	new string[64], targetname[MAX_PLAYER_NAME];
+	GetPlayerName(params[0], targetname, sizeof(targetname));
+
+	format(string, sizeof(string), "Вы вылечили игрока %s.", targetname);
+
 	if (pInfo[playerid][pAdmin] <= 0) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 
-	SetPlayerHealth(playerid, 100);
-	SendClientMessage(playerid, COLOR_GREEN, "Вы вылечили себя.");
+	if (sscanf(params, "d", params[0]))
+		return SendClientMessage(playerid, COLOR_GREY, "/heal [ID]");	
+
+	if (IsPlayerConnected(params[0]) == 0) 
+		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не на сервере!");	
+
+	if (params[0] == playerid)
+		format(string, sizeof(string), "Вы вылечили себя.");
+
+	SetPlayerHealth(params[0], 100);
+	SendClientMessage(playerid, COLOR_GREEN, string);
 
 	return 1;
 }
@@ -594,16 +614,16 @@ cmd:pm(playerid, params[]) {
 		return SendClientMessage(playerid, COLOR_RED, "Нельзя отправить сообщение самому себе.");
 	
 	format(string, sizeof(string), "(( PM к %s[%d]: %s ))", targetname, targetid, params[1]);
-	SendClientMessage(playerid, 0xFFFF00AA, string);
+	SendClientMessage(playerid, COLOR_YELLOW, string);
 	
 	format(string, sizeof(string), "(( PM от %s[%d]: %s ))", sendername, playerid, params[1]);
-	SendClientMessage(params[0], 0xFFFF00AA, string);	
+	SendClientMessage(params[0], COLOR_YELLOW, string);	
 	
 	return 1;
 }
 
 cmd:me(playerid, params[]) {    
-	new playername[MAX_PLAYER_NAME + 1];
+	new playername[MAX_PLAYER_NAME];
 	GetPlayerName(playerid, playername, sizeof(playername));
 	
 	//проверка на правильное введение команды и пустоту параметров
@@ -612,6 +632,20 @@ cmd:me(playerid, params[]) {
 
     new string[128];
 	format(string, sizeof(string), "* %s %s", playername, params[0]);
+	ProxDetector(playerid, 15.0, string, RP_COLOR, RP_COLOR, RP_COLOR, RP_COLOR, RP_COLOR);
+	return 1;
+}
+
+cmd:do(playerid, params[]) {
+	new playername[MAX_PLAYER_NAME];
+	GetPlayerName(playerid, playername, sizeof(playername));
+	
+	//проверка на правильное введение команды и пустоту параметров
+    if (sscanf(params, "s[128]", params[0])) 
+		return SendClientMessage(playerid, COLOR_GREY, "/do [Действие]");
+
+    new string[128];
+	format(string, sizeof(string), "* %s (( %s ))", params[0], playername);
 	ProxDetector(playerid, 15.0, string, RP_COLOR, RP_COLOR, RP_COLOR, RP_COLOR, RP_COLOR);
 	return 1;
 }
@@ -643,8 +677,64 @@ cmd:delveh(playerid, params[]) {
 	return 1;
 }
 
+alias:help("commands");
 cmd:help(playerid, params[]) {
 	ShowPlayerDialog(playerid, 8010, DIALOG_STYLE_LIST, "Помощь по командам", "Общие\nАдминские", "OK", "Выход");
+
+	return 1;
+}
+
+cmd:changeadmlvl(playerid, params[]) {
+	new admname[MAX_PLAYER_NAME], targetname[MAX_PLAYER_NAME], string[128];
+	if (pInfo[playerid][pAdmin] <= 5) 
+		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
+	
+	if (sscanf(params, "dd", params[0], params[1]))
+		return SendClientMessage(playerid, COLOR_GREY, "/changeadmlvl [ID] [Уровень]");			
+
+	if (pInfo[playerid][pAdmin] < 5)
+		return SendClientMessage(playerid, COLOR_RED, "Ваш уровень админки слишком низок!");
+
+	if (pInfo[params[0]][pAdmin] <= 0)
+		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не имеет админки!");
+	
+	if (params[1] == 0)
+		return SendClientMessage(playerid, COLOR_RED, "Для снятия игрока с админки используйте /deladm [ID].");
+
+	if (params[0] == playerid) 
+		return SendClientMessage(playerid, COLOR_RED, "Нельзя изменить свой уровень админки!");
+	
+	GetPlayerName(playerid, admname, sizeof(admname));
+	GetPlayerName(params[0], targetname, sizeof(targetname));
+
+	format(string, sizeof(string), "%s[%d] изменил уровень админки игрока %s[%d] с %d на %d.", admname, playerid, targetname, params[0], pInfo[params[0]][pAdmin], params[1]);
+	pInfo[params[0]][pAdmin] = params[1];
+	SendClientMessageToAll(COLOR_RED, string);
+
+	return 1;
+}
+
+alias:achat("a");
+cmd:achat(playerid, params[]) {
+	new playername[MAX_PLAYER_NAME];
+	new string[128];
+	GetPlayerName(playerid, playername, sizeof(playername));
+
+	format(string, sizeof(string), "[A] %s: %s", playername, params[0]);
+
+
+	if (pInfo[playerid][pAdmin] <= 0) 
+		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
+	
+	if (sscanf(params, "s", params[0]))
+		return SendClientMessage(playerid, COLOR_GREY, "/a(chat) [Сообщение]");
+
+	for (new i; i < MAX_PLAYERS; i++) {
+		if (pInfo[i][pAdmin] <= 0)
+			continue;
+		else
+			SendClientMessage(i, 0x46BBAA00, string);
+	}
 
 	return 1;
 }
