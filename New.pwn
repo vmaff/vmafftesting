@@ -15,7 +15,7 @@
 //прочее
 #define INFINITY            Float:0x7F800000
 #define COMMANDS_QTY		14
-#define INVENTORY_SLOTS		10
+#define MAX_INV_SLOTS		10
 
 //спавны
 #define LS_SPAWN			(2, 1277.4312, -1539.7104, 13.5589, 272.0752 , 0, 0, 0, 0, 0, 0)
@@ -55,6 +55,11 @@ new cmds[][e_cmds] = {
 	{"com", "/inv", "Открытие инвентаря персонажа."}
 };
 
+new allitems[][32] = {
+	"Телефон",
+	"Аптечка"
+};
+
 //информация об игроке
 enum e_pInfo {
 	pID,
@@ -68,18 +73,15 @@ enum e_pInfo {
 	bool:pInGame
 };
 
-//инвентарь игрока
-enum p_Inventory {
+enum e_pInventory {
 	itemID,
 	ownerID,
-	itemName[32],
-	itemNameRus[32],
-	itemNumber[8],
-	itemCount
+	itemType,
+	itemValue[8]
 };
 
 new pInfo[MAX_PLAYERS][e_pInfo];
-new pItems[MAX_PLAYERS][p_Inventory];
+new pInv[MAX_INV_SLOTS][e_pInventory];
 
 public OnGameModeInit()
 {	
@@ -102,14 +104,11 @@ stock ClearPInfo (playerid) {
 	return 1;
 }
 
-stock ClearPItems (playerid) {
-	pItems[playerid][itemID] = 0;
-	pItems[playerid][ownerID] = 0;
-	pItems[playerid][itemName][0] = EOS;
-	pItems[playerid][itemNameRus][0] = EOS;
-	pItems[playerid][itemNumber][0] = EOS;
-	pItems[playerid][itemCount] = 0;
-	return 1;
+//имя игрока по айди
+stock PlayerName(playerid) {
+	new targetname[MAX_PLAYER_NAME];
+	GetPlayerName(playerid, targetname, sizeof(targetname));
+	return targetname;
 }
 
 //коннект к базе
@@ -135,11 +134,9 @@ public OnGameModeExit()
 
 public OnPlayerRequestClass(playerid, classid)
 {
-	//хуй его знает
-	/*if (!pInfo[playerid][pInGame]) {
-		SetSpawnInfo(playerid, 0, 2, 1958.3783, 1343.1572, 15.3746, 269.1425, 0, 0, 0, 0, 0, 0);
-		SpawnPlayer(playerid);
-	}*/
+	if (!pInfo[playerid][pInGame]) {
+		return 0;
+	}
 	return 1;
 }
 
@@ -147,7 +144,6 @@ public OnPlayerConnect(playerid)
 {
 	//обнуляем энуминаторы для последующей в них записи
 	ClearPInfo(playerid);
-	ClearPItems(playerid);
 
 	//проверка наличия аккаунта в базе
 	if (!pInfo[playerid][pInGame]) {
@@ -156,7 +152,7 @@ public OnPlayerConnect(playerid)
 		format(query, sizeof(query), "SELECT * FROM `accounts` WHERE `name` = '%s'", pInfo[playerid][pName]);
 		mysql_query(dbHandle, query, true);
 
-		CheckAcc(playerid);
+		CheckAcc(playerid);		
 	}
 	
 	SpawnPlayer(playerid);
@@ -167,9 +163,7 @@ public OnPlayerConnect(playerid)
 public OnPlayerDisconnect(playerid, reason)
 {
 	SaveAcc(playerid); // сохраняем данные об аккаунте
-	SaveInventory(playerid); // сохраняем данные об инвентаре игрока
 	ClearPInfo(playerid); // на всякий случай ещё обнуляем энуминатор
-	ClearPItems(playerid); // на всякий случай ещё обнуляем энуминатор
 	return 1;
 }
 
@@ -201,15 +195,6 @@ stock SaveAcc(playerid) {
 	GetPlayerPos(playerid, pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ]);
 
 	format(query, sizeof(query), "UPDATE `accounts` SET `name` = '%s', `password` = '%s', `money` = %d, `admin` = %d, `posX` = %f, `posY` = %f, `posZ` = %f WHERE `id` = %d", pInfo[playerid][pName], pInfo[playerid][pPassword], pInfo[playerid][pMoney], pInfo[playerid][pAdmin], pInfo[playerid][pX], pInfo[playerid][pY], pInfo[playerid][pZ], pInfo[playerid][pID]);
-	mysql_query(dbHandle, query, false);
-	return 1;
-}
-
-//сохранение инвентаря
-stock SaveInventory(playerid) {
-	new query[132 + 11 + 11 + 3];
-
-	format(query, sizeof(query), "UPDATE `items` SET `ownerid` = %d, `count` = %d WHERE `id` = %d", pItems[playerid][ownerID], pItems[playerid][itemCount], pItems[playerid][itemID]);
 	mysql_query(dbHandle, query, false);
 	return 1;
 }
@@ -247,25 +232,9 @@ stock CreateAcc(playerid, password[]) {
 	return 1;
 }
 
-stock CreateItem(playerid, ownerid, name, number) {
-	new query[120 + ];
-
-	format(query, sizeof(query), "INSERT INTO `items` (`ownerid`, `name`, `number`, `count`) VALUES (%d, '%s', '%s', 1)", ownerid, name, number
-	mysql_query(dbHandle, query, true);
-	LoadItemID(playerid);
-
-	SendClientMessage(playerid, COLOR_GREEN, "Вы успешно создали предмет!");
-	return 1;
-}
-
 //загрузка айдишника только что созданного аккаунта в энуминатор
 stock LoadAccID(playerid) {
 	return pInfo[playerid][pID] = cache_insert_id();
-}
-
-//загрузка айдишника только что созданного предмета
-stock LoadItemID(playerid) {
-	return pItems[playerid][itemID] = cache_insert_id();
 }
 
 //загрузка данных об аккаунте в энуминатор
@@ -284,30 +253,22 @@ stock LoadAcc(playerid) {
 	return 1;
 }
 
-stock LoadInventory(playerid) {
+stock LoadInv(playerid) {
 	new rows;
-	new line[1000], string[128];
+	new string[128];
 	cache_get_row_count(rows);
 
-	line = "#\tНазвание предмета\tКоличество";
+	if (rows <= 0) {
+		string = "Ваш инвентарь пуст!";
+		return SendClientMessage(playerid, -1, string);
+	}		
 
 	for (new i; i < rows; i++) {
-		cache_get_value_name_int(i, "id", pItems[playerid][itemID]);
-		cache_get_value_name_int(i, "ownerid", pItems[playerid][ownerID]);
-		cache_get_value_name(i, "name", pItems[playerid][itemName]);
-		cache_get_value_name(i, "number", pItems[playerid][itemNumber]);
-		cache_get_value_name_int(i, "count", pItems[playerid][itemCount]);
-	}
-
-	for (new i; i < INVENTORY_SLOTS; i++) {
-		if (pItems[playerid][itemName])
-			format(string, sizeof(string), "\n%d\t%s\t%d", i, pItems[playerid][itemName], pItems[playerid][itemCount]);
-		else
-			format(string, sizeof(string), "\n%d\tПусто\t0", i);
-		strcat(line, string);
-	}
-
-	ShowPlayerDialog(playerid, 8014, DIALOG_STYLE_TABLIST_HEADERS, "Инвентарь", line, "OK", "Выход");
+		cache_get_value_name_int(i, "id", pInv[i][itemID]);
+		cache_get_value_name_int(i, "ownerid", pInv[i][ownerID]);
+		cache_get_value_name_int(i, "type", pInv[i][itemType]);
+		cache_get_value_name(i, "value", pInv[i][itemValue], 8);		
+	}		
 
 	return 1;	
 }
@@ -559,6 +520,7 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 			}
 			SpawnPlayer(playerid);
 		}
+		//диалог инвентаря
 		case 8014: {
 			if (!response)
 				return 1;
@@ -573,6 +535,8 @@ public OnPlayerClickPlayer(playerid, clickedplayerid, source)
 {
 	return 1;
 }
+
+//================= КОМАНДЫ CMD ==================//
 
 //выдача админки игроку
 cmd:makeadm(playerid, params[]) {
@@ -717,16 +681,15 @@ cmd:weap(playerid, params[]) {
 
 //хил игрока
 cmd:heal(playerid, params[]) {
-	new string[64], targetname[MAX_PLAYER_NAME];
-	GetPlayerName(params[0], targetname, sizeof(targetname));
-
-	format(string, sizeof(string), "Вы вылечили игрока %s.", targetname);
+	new string[64];	
 
 	if (pInfo[playerid][pAdmin] <= 0) 
 		return SendClientMessage(playerid, COLOR_RED, "Доступ к команде запрещен!");
 
 	if (sscanf(params, "d", params[0]))
 		return SendClientMessage(playerid, COLOR_GREY, "/heal [ID]");	
+
+	format(string, sizeof(string), "Вы вылечили игрока %s.", PlayerName(params[0]));
 
 	if (IsPlayerConnected(params[0]) == 0) 
 		return SendClientMessage(playerid, COLOR_RED, "Выбранный игрок не на сервере!");	
@@ -856,12 +819,30 @@ cmd:help(playerid, params[]) {
 	return 1;
 }
 
+//инвентарь
 cmd:inv(playerid, params[]) {
-	new query[64 + 3];
+	new query[128];
+	new line[256], string[64];
 
+	line = "#\tПредмет\tКоличество/Значение";
+
+	//посылаем запрос в базу по ownerid
 	format(query, sizeof(query), "SELECT * FROM `items` WHERE `ownerid` = %d", pInfo[playerid][pID]);
 	mysql_query(dbHandle, query, true);
-	LoadInventory(playerid);
+	LoadInv(playerid);
+
+	//проходимся по каждой полученной строчке с предметом
+	for (new i; i < MAX_INV_SLOTS; i++) {
+		if (pInv[i][itemID]) {						
+			printf("%d - %s", pInv[i][itemType], allitems[pInv[i][itemType]]);
+			format(string, sizeof(string), "\n%d\t%s\t%s", i+1, allitems[pInv[i][itemType]], pInv[i][itemValue]);		
+		}
+		else 
+			format(string, sizeof(string), "\n%d\tПусто\t0", i+1);
+		strcat(line, string);
+	}
+
+	ShowPlayerDialog(playerid, 8014, DIALOG_STYLE_TABLIST_HEADERS, "Инвентарь персонажа", line, "OK", "Выход");
 
 	return 1;
 }
