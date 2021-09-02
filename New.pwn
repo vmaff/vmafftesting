@@ -104,6 +104,16 @@ stock ClearPInfo (playerid) {
 	return 1;
 }
 
+stock ClearPInv () {
+	for (new i; i < sizeof(pInv); i++) {
+		pInv[i][itemID] = 0;
+		pInv[i][ownerID] = 0;
+		pInv[i][itemType] = 0;
+		pInv[i][itemValue][0] = EOS;
+	}
+	return 1;
+}
+
 //имя игрока по айди
 stock PlayerName(playerid) {
 	new targetname[MAX_PLAYER_NAME];
@@ -144,6 +154,7 @@ public OnPlayerConnect(playerid)
 {
 	//обнуляем энуминаторы для последующей в них записи
 	ClearPInfo(playerid);
+	ClearPInv();
 
 	//проверка наличия аккаунта в базе
 	if (!pInfo[playerid][pInGame]) {
@@ -164,6 +175,7 @@ public OnPlayerDisconnect(playerid, reason)
 {
 	SaveAcc(playerid); // сохраняем данные об аккаунте
 	ClearPInfo(playerid); // на всякий случай ещё обнуляем энуминатор
+	ClearPInv(); // на всякий случай ещё обнуляем энуминатор
 	return 1;
 }
 
@@ -260,7 +272,8 @@ stock LoadInv(playerid) {
 
 	if (rows <= 0) {
 		string = "Ваш инвентарь пуст!";
-		return SendClientMessage(playerid, -1, string);
+		SendClientMessage(playerid, -1, string);
+		return 1;
 	}		
 
 	for (new i; i < rows; i++) {
@@ -271,6 +284,15 @@ stock LoadInv(playerid) {
 	}		
 
 	return 1;	
+}
+
+stock DelItem(ownerid, itemid) {
+	new query[128];
+
+	format(query, sizeof(query), "DELETE FROM `items` WHERE `ownerid` = %d AND `id` = %d", ownerid, itemid);
+	mysql_query(dbHandle, query, false);
+
+	return 1;
 }
 
 public OnPlayerDeath(playerid, killerid, reason)
@@ -524,8 +546,87 @@ public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 		case 8014: {
 			if (!response)
 				return 1;
-			if (response)
+			if (response) {
+				switch (listitem) {
+					case 0..9: {	
+						SetPVarInt(playerid, "item", listitem);				
+						return ShowPlayerDialog(playerid, 8015, DIALOG_STYLE_LIST, "Инвентарь персонажа", "Использовать\nПередать\nВыбросить\nУдалить", "OK", "Назад");				
+					}
+				}
+			}
+		}
+		//действия с предметом
+		case 8015: {
+			if (!response) {
+				new query[128], line[256], string[64];
+				line = "#\tПредмет\tКоличество/Значение";
+
+				//посылаем запрос в базу по ownerid
+				format(query, sizeof(query), "SELECT * FROM `items` WHERE `ownerid` = %d", pInfo[playerid][pID]);
+				mysql_query(dbHandle, query, true);
+				LoadInv(playerid);
+
+				//проходимся по каждой полученной строчке с предметом
+				for (new i; i < MAX_INV_SLOTS; i++) {
+					if (pInv[i][itemID]) {												
+						format(string, sizeof(string), "\n%d\t%s\t%s", i+1, allitems[pInv[i][itemType]], pInv[i][itemValue]);		
+					}
+					else 
+						format(string, sizeof(string), "\n%d\tПусто\t0", i+1);
+					strcat(line, string);
+				}
+				
+				return ShowPlayerDialog(playerid, 8014, DIALOG_STYLE_TABLIST_HEADERS, "Инвентарь персонажа", line, "OK", "Выход");
+			}
+
+			if (response) {			
+				new selecteditem = GetPVarInt(playerid, "item");
+
+				switch (listitem) {
+					case 0: {
+						switch (pInv[selecteditem][itemType]) {							
+							case 0: SendClientMessage(playerid, COLOR_GREY, "Используйте /call [Номер], /sms [Номер]");
+							case 1: {								
+								SetPlayerHealth(playerid, 100.0);
+								
+								DelItem(pInv[selecteditem][ownerID], pInv[selecteditem][itemID]);
+								SendClientMessage(playerid, COLOR_GREEN, "Вы успешно использовали аптечку.");								
+							}
+						}
+					}
+					case 1: return 1;
+					case 2: return 1;
+					case 3: return ShowPlayerDialog(playerid, 8016, DIALOG_STYLE_MSGBOX, "Удаление предмета", "Вы действительно хотите удалить предмет?", "Да", "Отмена");
+				}
+			}
+		}
+		case 8016: {
+			new selecteditem = GetPVarInt(playerid, "item");
+			
+			if (!response) 
+				return ShowPlayerDialog(playerid, 8015, DIALOG_STYLE_LIST, "Инвентарь персонажа", "Использовать\nПередать\nВыбросить\nУдалить", "OK", "Назад");
+			if (response) {
+				new string[128];
+				new item[32];
+				new count;
+				new value[8];
+
+				item = allitems[pInv[selecteditem][itemType]];
+
+				if (!strcmp(item, "Телефон", false)) {
+					value = pInv[selecteditem][itemValue];
+					format(string, sizeof(string), "Предмет %s(%s) был удален.", item, value);
+				}
+				if (!strcmp(item, "Аптечка", false)) {
+					count = pInv[selecteditem][itemValue];
+					format(string, sizeof(string), "Предмет %s(%d) был удален.", item, count);
+				}
+ 				
+				DelItem(pInv[selecteditem][ownerID], pInv[selecteditem][itemID]);
+				
+				SendClientMessage(playerid, -1, string);
 				return 1;
+			}
 		}
 	}
 	return 1;
@@ -821,6 +922,8 @@ cmd:help(playerid, params[]) {
 
 //инвентарь
 cmd:inv(playerid, params[]) {
+	ClearPInv();
+	
 	new query[128];
 	new line[256], string[64];
 
@@ -833,8 +936,7 @@ cmd:inv(playerid, params[]) {
 
 	//проходимся по каждой полученной строчке с предметом
 	for (new i; i < MAX_INV_SLOTS; i++) {
-		if (pInv[i][itemID]) {						
-			printf("%d - %s", pInv[i][itemType], allitems[pInv[i][itemType]]);
+		if (pInv[i][itemID]) {									
 			format(string, sizeof(string), "\n%d\t%s\t%s", i+1, allitems[pInv[i][itemType]], pInv[i][itemValue]);		
 		}
 		else 
